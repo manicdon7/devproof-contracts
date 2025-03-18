@@ -37,8 +37,9 @@ module.exports = {
    },
    etherscan: {
       apiKey: {
-         amoy: process.env.ETHERSCAN_API_KEY
-      }
+         sepolia: process.env.ETHERSCAN_API_KEY,
+         polygonAmoy: process.env.POLYGON_API_KEY
+      },
    },
    paths: {
       sources: "./contracts",
