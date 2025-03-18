@@ -2,8 +2,6 @@ const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
 describe("Staking", function () {
-  let stakingToken;
-  let rewardToken;
   let rewardDistributor;
   let yieldPool;
   let staking;
@@ -14,45 +12,30 @@ describe("Staking", function () {
   beforeEach(async function () {
     [owner, user1, user2] = await ethers.getSigners();
     
-    // Deploy staking token
-    const StakingToken = await ethers.getContractFactory("StakingToken");
-    stakingToken = await StakingToken.deploy();
-    
-    // Deploy reward token
-    const RewardToken = await ethers.getContractFactory("RewardToken");
-    rewardToken = await RewardToken.deploy();
-    
     // Deploy staking contract
     const Staking = await ethers.getContractFactory("Staking");
-    staking = await Staking.deploy(stakingToken.target);
+    staking = await Staking.deploy();
     
     // Deploy reward distributor
     const RewardDistribution = await ethers.getContractFactory("RewardDistribution");
-    rewardDistributor = await RewardDistribution.deploy(rewardToken.target);
+    rewardDistributor = await RewardDistribution.deploy();
     
     // Deploy yield pool
     const YieldPool = await ethers.getContractFactory("YieldPool");
-    yieldPool = await YieldPool.deploy(rewardToken.target);
+    yieldPool = await YieldPool.deploy();
     
     // Set up staking contract
     await staking.setRewardDistributor(rewardDistributor.target);
     await staking.setYieldPool(yieldPool.target);
     
-    // Mint some tokens to users for testing
-    const mintAmount = ethers.parseEther("1000");
-    await stakingToken.mint(user1.address, mintAmount);
-    await stakingToken.mint(user2.address, mintAmount);
-    
-    // Transfer some reward tokens to reward distributor
-    const rewardAmount = ethers.parseEther("10000");
-    await rewardToken.transfer(rewardDistributor.target, rewardAmount);
+    // Fund the reward distributor with some CORE tokens
+    await owner.sendTransaction({
+      to: rewardDistributor.target,
+      value: ethers.parseEther("10")
+    });
   });
 
   describe("Deployment", function () {
-    it("Should set the staking token correctly", async function () {
-      expect(await staking.stakingToken()).to.equal(stakingToken.target);
-    });
-
     it("Should set the owner correctly", async function () {
       expect(await staking.owner()).to.equal(owner.address);
     });
@@ -94,65 +77,51 @@ describe("Staking", function () {
   });
 
   describe("Staking", function () {
-    it("Should allow users to stake tokens", async function () {
-      const stakeAmount = ethers.parseEther("100");
+    it("Should allow users to stake CORE tokens", async function () {
+      const stakeAmount = ethers.parseEther("1");
       
-      // Approve staking contract
-      await stakingToken.connect(user1).approve(staking.target, stakeAmount);
-      
-      // Stake tokens
-      await staking.connect(user1).stake(stakeAmount);
+      // Stake CORE tokens
+      await staking.connect(user1).stake({ value: stakeAmount });
       
       // Check user's stake
       const userStake = await staking.stakes(user1.address);
       expect(userStake.amount).to.equal(stakeAmount);
       
-      // Check contract's token balance
-      expect(await stakingToken.balanceOf(staking.target)).to.equal(stakeAmount);
+      // Check contract's CORE balance
+      expect(await ethers.provider.getBalance(staking.target)).to.equal(stakeAmount);
       
       // Check total staked
       expect(await staking.totalStaked()).to.equal(stakeAmount);
     });
     
     it("Should update last staked time on stake", async function () {
-      const stakeAmount = ethers.parseEther("100");
-      await stakingToken.connect(user1).approve(staking.target, stakeAmount);
+      const stakeAmount = ethers.parseEther("1");
       
       const blockBefore = await ethers.provider.getBlock("latest");
-      const txReceipt = await staking.connect(user1).stake(stakeAmount);
+      const txReceipt = await staking.connect(user1).stake({ value: stakeAmount });
       const blockAfter = await ethers.provider.getBlock(txReceipt.blockNumber);
       
       const userStake = await staking.stakes(user1.address);
       expect(userStake.lastStakedTime).to.equal(blockAfter.timestamp);
     });
     
-    it("Should fail if trying to stake zero tokens", async function () {
+    it("Should fail if trying to stake zero CORE tokens", async function () {
       await expect(
-        staking.connect(user1).stake(0)
-      ).to.be.revertedWith("Cannot stake zero tokens");
-    });
-    
-    it("Should fail if not approved enough tokens", async function () {
-      const stakeAmount = ethers.parseEther("100");
-      // Not approving tokens
-      
-      await expect(
-        staking.connect(user1).stake(stakeAmount)
-      ).to.be.reverted; // SafeERC20: low-level call failed
+        staking.connect(user1).stake({ value: 0 })
+      ).to.be.revertedWith("Cannot stake zero CORE tokens");
     });
   });
 
   describe("Unstaking", function () {
     beforeEach(async function () {
       // Stake some tokens first
-      const stakeAmount = ethers.parseEther("100");
-      await stakingToken.connect(user1).approve(staking.target, stakeAmount);
-      await staking.connect(user1).stake(stakeAmount);
+      const stakeAmount = ethers.parseEther("5");
+      await staking.connect(user1).stake({ value: stakeAmount });
     });
     
     it("Should allow users to unstake tokens after minimum stake period with no penalty", async function () {
-      const unstakeAmount = ethers.parseEther("50");
-      const initialBalance = await stakingToken.balanceOf(user1.address);
+      const unstakeAmount = ethers.parseEther("2");
+      const initialBalance = await ethers.provider.getBalance(user1.address);
       
       // Fast forward time past minimum stake period
       const minStakePeriod = await staking.MIN_STAKE_PERIOD();
@@ -160,25 +129,32 @@ describe("Staking", function () {
       await ethers.provider.send("evm_mine");
       
       // Unstake tokens
-      await staking.connect(user1).unstake(unstakeAmount);
+      const unstakeTx = await staking.connect(user1).unstake(unstakeAmount);
+      const gasUsed = (await unstakeTx.wait()).gasUsed * (await unstakeTx.wait()).gasPrice;
       
       // Check user's stake
       const userStake = await staking.stakes(user1.address);
-      expect(userStake.amount).to.equal(ethers.parseEther("50")); // 100 - 50
+      expect(userStake.amount).to.equal(ethers.parseEther("3")); // 5 - 2
       
       // Check user received full amount (no penalty)
-      expect(await stakingToken.balanceOf(user1.address)).to.equal(initialBalance + unstakeAmount);
+      // Account for gas costs in the balance check
+      const expectedBalance = initialBalance + unstakeAmount - gasUsed;
+      expect(await ethers.provider.getBalance(user1.address)).to.be.closeTo(
+        expectedBalance,
+        ethers.parseEther("0.01") // Allow for small rounding differences
+      );
       
       // Check total staked
-      expect(await staking.totalStaked()).to.equal(ethers.parseEther("50"));
+      expect(await staking.totalStaked()).to.equal(ethers.parseEther("3"));
     });
     
     it("Should apply penalty when unstaking before minimum stake period", async function () {
-      const unstakeAmount = ethers.parseEther("50");
-      const initialBalance = await stakingToken.balanceOf(user1.address);
+      const unstakeAmount = ethers.parseEther("2");
+      const initialBalance = await ethers.provider.getBalance(user1.address);
       
       // Unstake tokens immediately (before minimum stake period)
-      await staking.connect(user1).unstake(unstakeAmount);
+      const unstakeTx = await staking.connect(user1).unstake(unstakeAmount);
+      const gasUsed = (await unstakeTx.wait()).gasUsed * (await unstakeTx.wait()).gasPrice;
       
       // Calculate expected penalty (5%)
       const penaltyRate = await staking.PENALTY_RATE();
@@ -187,17 +163,22 @@ describe("Staking", function () {
       
       // Check user's stake
       const userStake = await staking.stakes(user1.address);
-      expect(userStake.amount).to.equal(ethers.parseEther("50")); // 100 - 50
+      expect(userStake.amount).to.equal(ethers.parseEther("3")); // 5 - 2
       
       // Check user received amount minus penalty
-      expect(await stakingToken.balanceOf(user1.address)).to.equal(initialBalance + expectedReceived);
+      // Account for gas costs in the balance check
+      const expectedBalance = initialBalance + expectedReceived - gasUsed;
+      expect(await ethers.provider.getBalance(user1.address)).to.be.closeTo(
+        expectedBalance,
+        ethers.parseEther("0.01") // Allow for small rounding differences
+      );
       
       // Check total staked
-      expect(await staking.totalStaked()).to.equal(ethers.parseEther("50"));
+      expect(await staking.totalStaked()).to.equal(ethers.parseEther("3"));
     });
     
     it("Should fail if trying to unstake more than staked", async function () {
-      const excessiveAmount = ethers.parseEther("200"); // User only staked 100
+      const excessiveAmount = ethers.parseEther("10"); // User only staked 5
       
       await expect(
         staking.connect(user1).unstake(excessiveAmount)
@@ -208,20 +189,24 @@ describe("Staking", function () {
   describe("Claiming Rewards", function () {
     beforeEach(async function () {
       // Stake some tokens first
-      const stakeAmount = ethers.parseEther("100");
-      await stakingToken.connect(user1).approve(staking.target, stakeAmount);
-      await staking.connect(user1).stake(stakeAmount);
+      const stakeAmount = ethers.parseEther("5");
+      await staking.connect(user1).stake({ value: stakeAmount });
     });
     
     it("Should allow users to claim rewards based on staked amount", async function () {
-      const initialBalance = await rewardToken.balanceOf(user1.address);
+      const initialBalance = await ethers.provider.getBalance(user1.address);
       
       // Claim rewards
-      await staking.connect(user1).claimReward();
+      const claimTx = await staking.connect(user1).claimReward();
+      const gasUsed = (await claimTx.wait()).gasUsed * (await claimTx.wait()).gasPrice;
       
       // The amount of rewards should be equal to the user's staked amount
-      // This is the default behavior of our mock reward distributor
-      expect(await rewardToken.balanceOf(user1.address)).to.equal(initialBalance + ethers.parseEther("100"));
+      // Account for gas costs in the balance check
+      const expectedBalance = initialBalance + ethers.parseEther("5") - gasUsed;
+      expect(await ethers.provider.getBalance(user1.address)).to.be.closeTo(
+        expectedBalance,
+        ethers.parseEther("0.01") // Allow for small rounding differences
+      );
     });
   });
 
@@ -229,9 +214,8 @@ describe("Staking", function () {
     it("Should return the total staked amount", async function () {
       expect(await staking.getTotalStaked()).to.equal(0);
       
-      const stakeAmount = ethers.parseEther("100");
-      await stakingToken.connect(user1).approve(staking.target, stakeAmount);
-      await staking.connect(user1).stake(stakeAmount);
+      const stakeAmount = ethers.parseEther("1");
+      await staking.connect(user1).stake({ value: stakeAmount });
       
       expect(await staking.getTotalStaked()).to.equal(stakeAmount);
     });

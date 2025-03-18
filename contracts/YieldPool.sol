@@ -1,29 +1,27 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./interfaces/IYieldPool.sol";
 
 contract YieldPool is Ownable, IYieldPool {
-    IERC20 public immutable rewardToken;
     uint256 public totalYieldPool;
 
-    constructor(address _rewardToken) Ownable(msg.sender) {
-        require(_rewardToken != address(0), "Invalid reward token");
-        rewardToken = IERC20(_rewardToken);
-    }
+    constructor() Ownable(msg.sender) {}
 
-    function addYield(uint256 amount) external onlyOwner {
-        rewardToken.transferFrom(msg.sender, address(this), amount);
-        totalYieldPool += amount;
+    function addYield() external payable onlyOwner {
+        totalYieldPool += msg.value;
     }
 
     function distributeYield(address user, uint256 amount) external override {
         require(amount > 0, "Invalid yield amount");
         require(amount <= totalYieldPool, "Insufficient pool balance");
 
-        rewardToken.transfer(user, amount);
         totalYieldPool -= amount;
+        (bool sent, ) = payable(user).call{value: amount}("");
+        require(sent, "Failed to send yield");
     }
+
+    // Allow contract to receive CORE tokens
+    receive() external payable {}
 }

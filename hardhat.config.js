@@ -1,5 +1,6 @@
 require("@nomicfoundation/hardhat-toolbox");
 require("@nomicfoundation/hardhat-ignition");
+require("hardhat-contract-sizer");
 require("dotenv").config();
 
 /** @type import('hardhat/config').HardhatUserConfig */
@@ -15,10 +16,8 @@ module.exports = {
    },
    ignition: {
       modules: [
-         "./ignition/modules/StakingToken.js",
          "./ignition/modules/RewardDistribution.js",
          "./ignition/modules/Staking.js",
-         "./ignition/modules/RewardToken.js",
          "./ignition/modules/YieldPool.js",
       ]
    },
@@ -33,13 +32,32 @@ module.exports = {
          chainId: 80002,
          gasPrice: "auto",
          timeout: 60000
-      }
+      },
+      tcore: {
+         url: "https://rpc.test2.btcs.network", // From your coreDaoTestnet in RainbowKitProviderWrapper
+         accounts: [process.env.WALLET_PRIVATE_KEY], // Private key from .env
+         chainId: 1114, // tCORE testnet chain ID
+         gasPrice: 2000000000, // 2 Gwei
+         gas: 5000000, // Gas limit
+         timeout: 60000, // 60 seconds timeout
+       },
    },
    etherscan: {
       apiKey: {
          sepolia: process.env.ETHERSCAN_API_KEY,
-         polygonAmoy: process.env.POLYGON_API_KEY
+         polygonAmoy: process.env.POLYGON_API_KEY,
+         tcore: process.env.TCORE_API_KEY
       },
+      customChains: [
+         {
+            network: "tcore",
+            chainId: 1114,
+            urls: {
+               apiURL: "https://scan.test2.btcs.network/api",
+               browserURL: "https://scan.test2.btcs.network"
+            }
+         }
+      ]
    },
    paths: {
       sources: "./contracts",
